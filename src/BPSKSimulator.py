@@ -157,10 +157,9 @@ class BPSKSimulation:
             pre_errors = []
             for _ in range(20):
                 if use_alamouti:
-                    variance = 1 / snr_val
+                    variance = 0.5 / snr_val
                 else:
-                    variance = 2 / snr_val
-
+                    variance = 1 / snr_val
                 random_bits, decoded_bits = BPSKSimulation.simulate(
                     n_bits, variance, apply_fading, n_antennas, use_alamouti
                 )

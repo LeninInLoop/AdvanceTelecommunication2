@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 
 
@@ -172,7 +174,7 @@ class BPSKSimulation:
             apply_fading: bool = True,
             n_antennas: int = 1,
             use_alamouti: bool = False,
-            n_trials: int = 40
+            n_trials: int = 25
     ) -> np.ndarray:
 
         ber_results = []

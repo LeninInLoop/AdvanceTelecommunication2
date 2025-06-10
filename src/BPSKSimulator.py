@@ -22,9 +22,9 @@ class BPSKSimulation:
 
     @staticmethod
     def generate_complex_rayleigh_fading(shape: tuple) -> np.ndarray:
-        # Complex Rayleigh fading (real and imaginary parts are independent Gaussian)
-        real = np.random.randn(*shape) * np.sqrt(0.5)
-        imag = np.random.randn(*shape) * np.sqrt(0.5)
+        # Complex Rayleigh fading with proper normalization
+        real = np.random.randn(*shape) / np.sqrt(2)
+        imag = np.random.randn(*shape) / np.sqrt(2)
         return real + 1j * imag
 
     @staticmethod
@@ -58,51 +58,71 @@ class BPSKSimulation:
         return np.mean(np.where(bits_a != bits_b, 1, 0))
 
     @staticmethod
-    def simulate_alamouti(n_bits: int, variance: float, n_antennas: int) -> tuple:
+    def simulate_alamouti(n_bits: int, variance: float, n_rx_antennas: int) -> tuple:
+        """
+        Alamouti STBC implementation for BPSK
+        """
+        # Ensure even number of bits
+        if n_bits % 2 == 1:
+            n_bits -= 1
 
-        n_bits = n_bits if n_bits % 2 == 0 else n_bits - 1
-        n_symbols = n_bits // 2
+        n_symbol_pairs = n_bits // 2
 
+        # Generate bits and BPSK symbols
         random_bits = BPSKSimulation.generate_random_bits(n_bits)
-        symbols = BPSKSimulation.apply_coding(random_bits).reshape((n_symbols, 2))
+        symbols = BPSKSimulation.apply_coding(random_bits)  # -1, +1
 
-        # Generate complex Rayleigh fading channels (n_antennas x 2)
-        H = BPSKSimulation.generate_complex_rayleigh_fading((n_antennas, 2, n_symbols))
+        # Group symbols in pairs
+        s1_vec = symbols[0::2]  # s1, s3, s5, ...
+        s2_vec = symbols[1::2]  # s2, s4, s6, ...
 
-        # Generate complex AWGN noise
-        noise = BPSKSimulation.generate_complex_gaussian_noise((n_symbols, n_antennas, 2), variance)
+        # Generate channel matrix: h[rx_ant, tx_ant, symbol_pair]
+        h = BPSKSimulation.generate_complex_rayleigh_fading((n_rx_antennas, 2, n_symbol_pairs))
 
-        # Transmit Alamouti encoded symbols
-        Y = np.zeros((n_symbols, n_antennas, 2), dtype=complex)
-        for i in range(n_symbols):
-            s1, s2 = symbols[i]
-            for j in range(n_antennas):
-                h1, h2 = H[j, :, i]
-                # Time slot 1: r1 = h1*s1 + h2*s2
-                Y[i, j, 0] = h1 * s1 + h2 * s2 + noise[i, j, 0]
-                # Time slot 2: r2 = h1*(-s2*) + h2*(s1*) = -h1*s2 + h2*s1 (since BPSK is real)
-                Y[i, j, 1] = -h1 * s2 + h2 * s1 + noise[i, j, 1]
+        # Generate noise
+        noise = BPSKSimulation.generate_complex_gaussian_noise((n_rx_antennas, 2, n_symbol_pairs), variance)
+
+        # Alamouti transmission and reception
+        r1 = np.zeros((n_rx_antennas, n_symbol_pairs), dtype=complex)
+        r2 = np.zeros((n_rx_antennas, n_symbol_pairs), dtype=complex)
+
+        for i in range(n_symbol_pairs):
+            s1, s2 = s1_vec[i], s2_vec[i]
+
+            for rx in range(n_rx_antennas):
+                h1, h2 = h[rx, 0, i], h[rx, 1, i]  # channels from tx1 and tx2 to rx
+
+                # Time slot 1: [s1, s2] transmitted from [tx1, tx2]
+                r1[rx, i] = h1 * s1 + h2 * s2 + noise[rx, 0, i]
+
+                # Time slot 2: [-s2*, s1*] transmitted from [tx1, tx2]
+                # For real BPSK: s* = s
+                r2[rx, i] = h1 * (-s2) + h2 * s1 + noise[rx, 1, i]
 
         # Alamouti decoding
-        s_hat = np.zeros((n_symbols, 2), dtype=complex)
-        for i in range(n_symbols):
-            s1_hat = 0
-            s2_hat = 0
-            for j in range(n_antennas):
-                h1, h2 = H[j, :, i]
-                r1 = Y[i, j, 0]
-                r2 = Y[i, j, 1]
+        s1_hat = np.zeros(n_symbol_pairs, dtype=complex)
+        s2_hat = np.zeros(n_symbol_pairs, dtype=complex)
+
+        for i in range(n_symbol_pairs):
+            s1_sum = 0
+            s2_sum = 0
+
+            for rx in range(n_rx_antennas):
+                h1, h2 = h[rx, 0, i], h[rx, 1, i]
 
                 # Alamouti combining
-                s1_hat += np.conj(h1) * r1 + h2 * np.conj(r2)
-                s2_hat += np.conj(h2) * r1 - h1 * np.conj(r2)
+                s1_sum += np.conj(h1) * r1[rx, i] + h2 * np.conj(r2[rx, i])
+                s2_sum += np.conj(h2) * r1[rx, i] - h1 * np.conj(r2[rx, i])
 
-            s_hat[i, 0] = s1_hat
-            s_hat[i, 1] = s2_hat
+            s1_hat[i] = s1_sum
+            s2_hat[i] = s2_sum
 
-        # Decision based on real part
-        decoded_symbols = s_hat.reshape(-1)
-        decoded_bits = BPSKSimulation.thresholding_complex(decoded_symbols)
+        # Decision: take real part and apply a threshold
+        decoded_symbols = np.zeros(n_bits)
+        decoded_symbols[0::2] = np.real(s1_hat)  # s1 estimates
+        decoded_symbols[1::2] = np.real(s2_hat)  # s2 estimates
+
+        decoded_bits = np.where(decoded_symbols >= 0, 1, 0)
 
         return random_bits, decoded_bits
 
@@ -123,22 +143,26 @@ class BPSKSimulation:
 
         if apply_fading:
             if n_antennas == 1:
-                coded_bits = BPSKSimulation.apply_fading(coded_bits)
+                # Single antenna with fading
+                fading = BPSKSimulation.generate_rayleigh_fading(n_bits)
+                received_signal = fading * coded_bits
+                noise = BPSKSimulation.generate_gaussian_noise(n_bits, variance)
+                received_signal += noise
+                received_signal = BPSKSimulation.thresholding(received_signal, threshold=0.0)
             else:
-                mrc_combined_signal = np.zeros_like(coded_bits, dtype=float)
+                mrc_signal = np.zeros(n_bits, dtype=float)
                 for _ in range(n_antennas):
                     h = BPSKSimulation.generate_rayleigh_fading(n_bits)
-                    r_i = h * coded_bits + BPSKSimulation.generate_gaussian_noise(n_bits, variance)
-                    mrc_combined_signal += h * r_i
-                coded_bits = mrc_combined_signal
-
-        if not apply_fading or n_antennas == 1:
-            noisy_bits = BPSKSimulation.apply_awgn_channel(coded_bits, variance)
+                    noise = BPSKSimulation.generate_gaussian_noise(n_bits, variance)
+                    r = h * coded_bits + noise
+                    mrc_signal += h * r  # MRC combining
+                received_signal = BPSKSimulation.thresholding(mrc_signal, threshold=0.0)
         else:
-            noisy_bits = coded_bits
+            # AWGN only
+            received_signal = BPSKSimulation.apply_awgn_channel(coded_bits, variance)
+            received_signal = BPSKSimulation.thresholding(received_signal, threshold=0.0)
 
-        extracted_bits = BPSKSimulation.thresholding(noisy_bits, threshold=0)
-        decoded_bits = BPSKSimulation.apply_decoding(extracted_bits)
+        decoded_bits = BPSKSimulation.apply_decoding(received_signal)
         return random_bits, decoded_bits
 
     @staticmethod
@@ -147,23 +171,25 @@ class BPSKSimulation:
             snr_db_values: np.ndarray,
             apply_fading: bool = True,
             n_antennas: int = 1,
-            use_alamouti: bool = False
+            use_alamouti: bool = False,
+            n_trials: int = 40
     ) -> np.ndarray:
 
-        errors = []
+        ber_results = []
         snr_linear = 10 ** (snr_db_values / 10)
 
-        for snr_val in snr_linear:
-            pre_errors = []
-            for _ in range(20):
+        for i, snr_val in enumerate(snr_linear):
+            errors = []
+            for trial in range(n_trials):
                 if use_alamouti:
-                    variance = 0.5 / snr_val
+                    variance = 2 / snr_val
                 else:
                     variance = 1 / snr_val
                 random_bits, decoded_bits = BPSKSimulation.simulate(
                     n_bits, variance, apply_fading, n_antennas, use_alamouti
                 )
-                pre_errors.append(BPSKSimulation.calculate_error(random_bits, decoded_bits))
-            errors.append(np.mean(pre_errors))
-            print(errors)
-        return errors
+                errors.append(BPSKSimulation.calculate_error(random_bits, decoded_bits))
+            ber = np.mean(errors)
+            ber_results.append(ber)
+            print(f"SNR: {snr_db_values[i]:2.0f} dB, BER: {ber:.6f}")
+        return np.array(ber_results)

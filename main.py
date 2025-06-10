@@ -15,6 +15,7 @@ def main():
         snr_db_values=snr_db_values,
         apply_fading=True,
     )
+
     errors_theoretical_fading = TheoreticalCalculations.bpsk_coherent_theoretical_ber_rayleigh_fading(snr_linear_values)
 
     plotter.plot_single_channel(
@@ -103,13 +104,13 @@ def main():
 
     # alamouti Simulation
     print("Simulating BPSK Coherent With alamouti ...")
-    antenna_configs = [2, 4, 8]
+    antenna_configs = [1, 2, 4, 8]
 
     alamouti_errors_list = []
     alamouti_channel_types = []
 
     for n_antennas in antenna_configs:
-        print(f"Simulating alamouti with {n_antennas} antenna(s) ...")
+        print(f"Simulating alamouti with {n_antennas} receiver antenna(s) ...")
 
         # Simulation
         errors_alamouti = BPSKSimulation.run_monte_carlo_simulation(
@@ -122,12 +123,12 @@ def main():
 
         alamouti_errors_list.append(errors_alamouti)
 
-        alamouti_channel_types.append(f'Alamouti, 2 Transmitter and {n_antennas} Receiver Antenna{"s" if n_antennas > 1 else ""}')
+        alamouti_channel_types.append(f'Alamouti, 2-TX {n_antennas}-Rx')
 
         # Individual plot for each MRC configuration
         plotter.plot_single_channel(
             snr_db_values, errors_alamouti, None,
-            f'Alamouti, 2 Transmitter and {n_antennas} Receiver Antenna{"s" if n_antennas > 1 else ""}'
+            f'Alamouti, 2-TX {n_antennas}-Rx'
         )
 
     # MRC Comparison plot
@@ -141,7 +142,7 @@ def main():
         save_path="alamouti_comparison.png"
     )
 
-    # MRC and Simple Comparison
+    # Full Comparison
     combined_snr_db_list = snr_db_list_mrc + [snr_db_values] + [snr_db_values] + snr_db_list_alamouti
     combined_errors_list = mrc_errors_list + [errors_awgn] + [errors_fading] + alamouti_errors_list
     combined_theoretical_list = None
